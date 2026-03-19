@@ -1,0 +1,12 @@
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Node (if frontend exists)
+node_modules/
+
+# OS files
+.DS_Store

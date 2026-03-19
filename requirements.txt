@@ -1,0 +1,5 @@
+flask
+flask-cors
+earthengine-api
+geemap
+python-dotenv
