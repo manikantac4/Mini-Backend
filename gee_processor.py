@@ -572,7 +572,7 @@ def process_water_boundaries(
                     s2_map
                 ),
 
-            "ndwi":s
+            "ndwi":
                 tile_url(
                     ndwi_map
                 ),
