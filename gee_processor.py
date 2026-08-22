@@ -65,11 +65,7 @@ def process_water_boundaries(bbox, threshold=0.1, area_min=8000):
     ).getMapId()
 
     def tile_url(map_id_obj):
-        return (
-            "https://earthengine.googleapis.com/v1/"
-            + map_id_obj["mapid"]
-            + "/tiles/{z}/{x}/{y}"
-        )
+     return map_id_obj["tile_fetcher"].url_format
 
     # ── Safe GeoJSON build ────────────────────────────────────────
     raw = vectors.getInfo()
