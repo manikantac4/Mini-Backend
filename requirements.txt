@@ -4,3 +4,11 @@ earthengine-api
 geemap
 python-dotenv
 gunicorn
+fastapi
+uvicorn
+earthengine-api
+geopy
+python-dotenv
+numpy
+rasterio
+requests
