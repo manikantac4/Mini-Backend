@@ -120,6 +120,34 @@ def detect_water():
             8000
         )
 
+        # Advanced / optional tuning parameters. These are all
+        # optional — if the frontend doesn't send them, the
+        # defaults defined in gee_processor.py are used.
+
+        ndwi_secondary_threshold = body.get(
+            "ndwi_secondary_threshold"
+        )
+
+        mndwi_threshold = body.get(
+            "mndwi_threshold"
+        )
+
+        awei_threshold = body.get(
+            "awei_threshold"
+        )
+
+        max_ndvi = body.get(
+            "max_ndvi"
+        )
+
+        max_ndbi = body.get(
+            "max_ndbi"
+        )
+
+        min_connected_pixels = body.get(
+            "min_connected_pixels"
+        )
+
 
         # --------------------------------------------------------
         # VALIDATE COORDINATES
@@ -165,6 +193,26 @@ def detect_water():
             area_min = float(
                 area_min
             )
+
+            # Optional advanced parameters — only cast if provided.
+
+            if ndwi_secondary_threshold is not None:
+                ndwi_secondary_threshold = float(ndwi_secondary_threshold)
+
+            if mndwi_threshold is not None:
+                mndwi_threshold = float(mndwi_threshold)
+
+            if awei_threshold is not None:
+                awei_threshold = float(awei_threshold)
+
+            if max_ndvi is not None:
+                max_ndvi = float(max_ndvi)
+
+            if max_ndbi is not None:
+                max_ndbi = float(max_ndbi)
+
+            if min_connected_pixels is not None:
+                min_connected_pixels = int(min_connected_pixels)
 
         except (TypeError, ValueError):
 
@@ -244,20 +292,48 @@ def detect_water():
 
         # --------------------------------------------------------
         # WATER DETECTION
+        #
+        # Only pass advanced parameters that were actually supplied
+        # so gee_processor.py's own defaults apply otherwise.
         # --------------------------------------------------------
 
+        detection_kwargs = {
+
+            "latitude": latitude,
+
+            "longitude": longitude,
+
+            "radius_km": radius_km,
+
+            "threshold": threshold,
+
+            "area_min": area_min,
+
+        }
+
+        optional_params = {
+
+            "ndwi_secondary_threshold": ndwi_secondary_threshold,
+
+            "mndwi_threshold": mndwi_threshold,
+
+            "awei_threshold": awei_threshold,
+
+            "max_ndvi": max_ndvi,
+
+            "max_ndbi": max_ndbi,
+
+            "min_connected_pixels": min_connected_pixels,
+
+        }
+
+        for key, value in optional_params.items():
+
+            if value is not None:
+                detection_kwargs[key] = value
+
         result = process_water_boundaries(
-
-            latitude=latitude,
-
-            longitude=longitude,
-
-            radius_km=radius_km,
-
-            threshold=threshold,
-
-            area_min=area_min
-
+            **detection_kwargs
         )
 
 
@@ -286,7 +362,10 @@ def detect_water():
                 result["geojson"],
 
             "tile_urls":
-                result["tile_urls"]
+                result["tile_urls"],
+
+            "parameters":
+                result.get("parameters", {})
 
         })
 
