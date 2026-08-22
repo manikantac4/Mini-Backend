@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
 import ee
 import json
 import os
@@ -9,30 +10,29 @@ from services.geocoder import get_location
 from services.gee_service import get_sentinel_image
 
 
-# ============================================================
-# GOOGLE EARTH ENGINE INITIALIZATION
-# ============================================================
-#
-# LOCAL WINDOWS:
-#   Uses Google Application Default Credentials (ADC)
-#
-# RENDER:
-#   Uses GOOGLE_APPLICATION_CREDENTIALS_JSON
-#
-# ============================================================
+# ================================================================
+# EARTH ENGINE INITIALIZATION
+# ================================================================
 
-if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
+service_account_json = os.environ.get(
+    "GOOGLE_APPLICATION_CREDENTIALS_JSON"
+)
 
-    # --------------------------------------------------------
-    # Render / Production
-    # --------------------------------------------------------
+if service_account_json:
+
+    # ------------------------------------------------------------
+    # RENDER / PRODUCTION
+    # ------------------------------------------------------------
+
     service_account_info = json.loads(
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+        service_account_json
     )
 
     credentials = ee.ServiceAccountCredentials(
         service_account_info["client_email"],
-        key_data=json.dumps(service_account_info)
+        key_data=json.dumps(
+            service_account_info
+        )
     )
 
     ee.Initialize(
@@ -42,88 +42,226 @@ if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
 
 else:
 
-    # --------------------------------------------------------
-    # Local Windows Development
-    # --------------------------------------------------------
+    # ------------------------------------------------------------
+    # LOCAL DEVELOPMENT
+    # Uses:
+    # gcloud auth application-default login
+    # ------------------------------------------------------------
+
     ee.Initialize(
         project="water-segmentation-gee"
     )
 
 
-# ============================================================
-# FLASK APPLICATION
-# ============================================================
+# ================================================================
+# FLASK
+# ================================================================
 
 app = Flask(__name__)
+
 CORS(app)
 
 
-# ============================================================
+# ================================================================
 # HOME
-# ============================================================
+# ================================================================
 
 @app.route("/", methods=["GET"])
 def home():
 
     return jsonify({
+
         "status": "ok",
-        "message": "Water Detection API running"
+
+        "message":
+            "Water Detection API running"
+
     })
 
 
-# ============================================================
-# WATER DETECTION
-# ============================================================
+# ================================================================
+# DETECT WATER
+# ================================================================
 
-@app.route("/detect-water", methods=["POST"])
+@app.route(
+    "/detect-water",
+    methods=["POST"]
+)
 def detect_water():
 
     try:
 
-        body = request.get_json()
+        body = request.get_json() or {}
 
-        if not body:
+        # --------------------------------------------------------
+        # INPUT
+        # --------------------------------------------------------
+
+        latitude = body.get(
+            "latitude"
+        )
+
+        longitude = body.get(
+            "longitude"
+        )
+
+        radius_km = body.get(
+            "radius_km",
+            10
+        )
+
+        threshold = body.get(
+            "threshold",
+            0.1
+        )
+
+        area_min = body.get(
+            "area_min",
+            8000
+        )
+
+        # --------------------------------------------------------
+        # VALIDATE COORDINATES
+        # --------------------------------------------------------
+
+        if (
+            latitude is None
+            or longitude is None
+        ):
+
             return jsonify({
+
                 "status": "error",
-                "message": "Request body is required"
+
+                "message":
+                    "latitude and longitude are required"
+
             }), 400
 
-        bbox = body.get("bbox")
+        try:
 
-        if not bbox or len(bbox) != 4:
+            latitude = float(
+                latitude
+            )
+
+            longitude = float(
+                longitude
+            )
+
+            radius_km = float(
+                radius_km
+            )
+
+            threshold = float(
+                threshold
+            )
+
+            area_min = float(
+                area_min
+            )
+
+        except (TypeError, ValueError):
 
             return jsonify({
+
                 "status": "error",
-                "message": "bbox required: [west, south, east, north]"
+
+                "message":
+                    "Invalid numeric input"
+
             }), 400
 
-        west, south, east, north = bbox
+        # --------------------------------------------------------
+        # COORDINATE RANGE
+        # --------------------------------------------------------
 
-        if west >= east or south >= north:
+        if not -90 <= latitude <= 90:
 
             return jsonify({
+
                 "status": "error",
-                "message": "Invalid bbox"
+
+                "message":
+                    "Invalid latitude"
+
             }), 400
 
-        threshold = body.get("threshold", 0.1)
-        area_min = body.get("area_min", 8000)
+        if not -180 <= longitude <= 180:
+
+            return jsonify({
+
+                "status": "error",
+
+                "message":
+                    "Invalid longitude"
+
+            }), 400
+
+        # --------------------------------------------------------
+        # RADIUS
+        # --------------------------------------------------------
+
+        if radius_km <= 0:
+
+            return jsonify({
+
+                "status": "error",
+
+                "message":
+                    "radius_km must be greater than 0"
+
+            }), 400
+
+        # Keep the application manageable
+        if radius_km > 50:
+
+            return jsonify({
+
+                "status": "error",
+
+                "message":
+                    "Maximum scan radius is 50 km"
+
+            }), 400
+
+        # --------------------------------------------------------
+        # WATER DETECTION
+        # --------------------------------------------------------
 
         result = process_water_boundaries(
-            bbox,
-            threshold,
-            area_min
+
+            latitude=latitude,
+
+            longitude=longitude,
+
+            radius_km=radius_km,
+
+            threshold=threshold,
+
+            area_min=area_min
+
         )
+
+        # --------------------------------------------------------
+        # RESPONSE
+        # --------------------------------------------------------
 
         return jsonify({
 
-            "status": "success",
+            "status":
+                "success",
 
             "feature_count":
                 result["feature_count"],
 
+            "center":
+                result["center"],
+
+            "radius_km":
+                result["radius_km"],
+
             "bbox":
-                bbox,
+                result["bbox"],
 
             "geojson":
                 result["geojson"],
@@ -135,62 +273,79 @@ def detect_water():
 
     except Exception as e:
 
-        return jsonify({
-
-            "status": "error",
-
-            "message":
-                str(e)
-
-        }), 500
-
-
-# ============================================================
-# AI ANALYZE PLACE
-# ============================================================
-
-@app.route("/ai/analyze-place", methods=["POST"])
-def analyze_place():
-
-    try:
-
-        body = request.get_json()
-
-        if not body:
-
-            return jsonify({
-                "status": "error",
-                "message": "Request body is required"
-            }), 400
-
-        place_name = body.get("place")
-
-        if not place_name:
-
-            return jsonify({
-                "status": "error",
-                "message": "place is required"
-            }), 400
-
-        location = get_location(place_name)
-
-        if not location:
-
-            return jsonify({
-                "status": "error",
-                "message": "place not found"
-            }), 404
-
-        image = get_sentinel_image(
-            location["lat"],
-            location["lon"]
+        print(
+            "DETECT WATER ERROR:",
+            str(e)
         )
 
         return jsonify({
 
-            "status": "success",
+            "status": "error",
 
-            "phase": 2,
+            "message": str(e)
+
+        }), 500
+
+
+# ================================================================
+# ANALYZE PLACE
+# ================================================================
+
+@app.route(
+    "/ai/analyze-place",
+    methods=["POST"]
+)
+def analyze_place():
+
+    try:
+
+        body = request.get_json() or {}
+
+        place_name = body.get(
+            "place"
+        )
+
+        if not place_name:
+
+            return jsonify({
+
+                "status": "error",
+
+                "message":
+                    "place is required"
+
+            }), 400
+
+        location = get_location(
+            place_name
+        )
+
+        if not location:
+
+            return jsonify({
+
+                "status": "error",
+
+                "message":
+                    "place not found"
+
+            }), 404
+
+        image = get_sentinel_image(
+
+            location["lat"],
+
+            location["lon"]
+
+        )
+
+        return jsonify({
+
+            "status":
+                "success",
+
+            "phase":
+                2,
 
             "place":
                 place_name,
@@ -212,15 +367,14 @@ def analyze_place():
 
             "status": "error",
 
-            "message":
-                str(e)
+            "message": str(e)
 
         }), 500
 
 
-# ============================================================
-# START FLASK
-# ============================================================
+# ================================================================
+# LOCAL SERVER
+# ================================================================
 
 if __name__ == "__main__":
 
