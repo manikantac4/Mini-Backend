@@ -1,41 +1,85 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import ee
+import json
+import os
 
 from gee_processor import process_water_boundaries
 from services.geocoder import get_location
 from services.gee_service import get_sentinel_image
 
 
-# ─────────────────────────────────────────────────────────────
-# Initialize Google Earth Engine
-# Uses Google Application Default Credentials (ADC)
-# configured on this Windows machine.
-# ─────────────────────────────────────────────────────────────
-ee.Initialize(project="water-segmentation-gee")
+# ============================================================
+# GOOGLE EARTH ENGINE INITIALIZATION
+# ============================================================
+#
+# LOCAL WINDOWS:
+#   Uses Google Application Default Credentials (ADC)
+#
+# RENDER:
+#   Uses GOOGLE_APPLICATION_CREDENTIALS_JSON
+#
+# ============================================================
 
+if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
+
+    # --------------------------------------------------------
+    # Render / Production
+    # --------------------------------------------------------
+    service_account_info = json.loads(
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+    )
+
+    credentials = ee.ServiceAccountCredentials(
+        service_account_info["client_email"],
+        key_data=json.dumps(service_account_info)
+    )
+
+    ee.Initialize(
+        credentials=credentials,
+        project="water-segmentation-gee"
+    )
+
+else:
+
+    # --------------------------------------------------------
+    # Local Windows Development
+    # --------------------------------------------------------
+    ee.Initialize(
+        project="water-segmentation-gee"
+    )
+
+
+# ============================================================
+# FLASK APPLICATION
+# ============================================================
 
 app = Flask(__name__)
 CORS(app)
 
 
-# ─────────────────────────────────────────────────────────────
-# Home
-# ─────────────────────────────────────────────────────────────
+# ============================================================
+# HOME
+# ============================================================
+
 @app.route("/", methods=["GET"])
 def home():
+
     return jsonify({
         "status": "ok",
         "message": "Water Detection API running"
     })
 
 
-# ─────────────────────────────────────────────────────────────
-# Water Detection
-# ─────────────────────────────────────────────────────────────
+# ============================================================
+# WATER DETECTION
+# ============================================================
+
 @app.route("/detect-water", methods=["POST"])
 def detect_water():
+
     try:
+
         body = request.get_json()
 
         if not body:
@@ -47,15 +91,19 @@ def detect_water():
         bbox = body.get("bbox")
 
         if not bbox or len(bbox) != 4:
+
             return jsonify({
-                "error": "bbox required: [west, south, east, north]"
+                "status": "error",
+                "message": "bbox required: [west, south, east, north]"
             }), 400
 
         west, south, east, north = bbox
 
         if west >= east or south >= north:
+
             return jsonify({
-                "error": "Invalid bbox"
+                "status": "error",
+                "message": "Invalid bbox"
             }), 400
 
         threshold = body.get("threshold", 0.1)
@@ -68,30 +116,48 @@ def detect_water():
         )
 
         return jsonify({
+
             "status": "success",
-            "feature_count": result["feature_count"],
-            "bbox": bbox,
-            "geojson": result["geojson"],
-            "tile_urls": result["tile_urls"]
+
+            "feature_count":
+                result["feature_count"],
+
+            "bbox":
+                bbox,
+
+            "geojson":
+                result["geojson"],
+
+            "tile_urls":
+                result["tile_urls"]
+
         })
 
     except Exception as e:
+
         return jsonify({
+
             "status": "error",
-            "message": str(e)
+
+            "message":
+                str(e)
+
         }), 500
 
 
-# ─────────────────────────────────────────────────────────────
-# AI Analyze Place
-# ─────────────────────────────────────────────────────────────
+# ============================================================
+# AI ANALYZE PLACE
+# ============================================================
+
 @app.route("/ai/analyze-place", methods=["POST"])
 def analyze_place():
 
     try:
+
         body = request.get_json()
 
         if not body:
+
             return jsonify({
                 "status": "error",
                 "message": "Request body is required"
@@ -100,6 +166,7 @@ def analyze_place():
         place_name = body.get("place")
 
         if not place_name:
+
             return jsonify({
                 "status": "error",
                 "message": "place is required"
@@ -108,6 +175,7 @@ def analyze_place():
         location = get_location(place_name)
 
         if not location:
+
             return jsonify({
                 "status": "error",
                 "message": "place not found"
@@ -119,25 +187,43 @@ def analyze_place():
         )
 
         return jsonify({
+
             "status": "success",
+
             "phase": 2,
-            "place": place_name,
-            "latitude": location["lat"],
-            "longitude": location["lon"],
-            "image_found": image is not None
+
+            "place":
+                place_name,
+
+            "latitude":
+                location["lat"],
+
+            "longitude":
+                location["lon"],
+
+            "image_found":
+                image is not None
+
         })
 
     except Exception as e:
+
         return jsonify({
+
             "status": "error",
-            "message": str(e)
+
+            "message":
+                str(e)
+
         }), 500
 
 
-# ─────────────────────────────────────────────────────────────
-# Run Flask
-# ─────────────────────────────────────────────────────────────
+# ============================================================
+# START FLASK
+# ============================================================
+
 if __name__ == "__main__":
+
     app.run(
         debug=True,
         port=5000
