@@ -1,34 +1,101 @@
 import ee
 
 
+# ================================================================
+# WATER BODY PROCESSOR
+# ================================================================
+
 def process_water_boundaries(
     latitude,
     longitude,
-    radius_km=10,
+    radius_km=50,
     threshold=0.1,
     area_min=8000
 ):
 
     # ============================================================
-    # 1. CREATE STUDY AREA USING RADIUS
+    # 1. CENTER POINT
     # ============================================================
+
+    latitude = float(latitude)
+    longitude = float(longitude)
+    radius_km = float(radius_km)
 
     center = ee.Geometry.Point([
-        float(longitude),
-        float(latitude)
+        longitude,
+        latitude
     ])
 
-    # Earth Engine buffer uses metres
-    roi = center.buffer(float(radius_km) * 1000)
 
     # ============================================================
-    # 2. LOAD SENTINEL-2
+    # 2. WATER DETECTION REGION
+    #
+    # This is the actual circular scanning region.
+    # ============================================================
+
+    roi = center.buffer(
+        radius_km * 1000
+    )
+
+
+    # ============================================================
+    # 3. DISPLAY REGION
+    #
+    # IMPORTANT:
+    # We DO NOT clip the satellite image to the circle.
+    #
+    # This gives us a normal satellite map around the circle
+    # instead of white space outside the detection region.
+    #
+    # 1.25 gives some extra map area around the scan circle.
+    # ============================================================
+
+    display_radius_km = radius_km * 1.25
+
+    display_roi = center.buffer(
+        display_radius_km * 1000
+    )
+
+    display_bbox = (
+        display_roi
+        .bounds()
+        .coordinates()
+        .getInfo()[0]
+    )
+
+    display_longitudes = [
+        coordinate[0]
+        for coordinate in display_bbox
+    ]
+
+    display_latitudes = [
+        coordinate[1]
+        for coordinate in display_bbox
+    ]
+
+    display_bounds = [
+        min(display_longitudes),
+        min(display_latitudes),
+        max(display_longitudes),
+        max(display_latitudes)
+    ]
+
+
+    # ============================================================
+    # 4. LOAD SENTINEL-2
+    #
+    # Filter using the actual circular detection region.
     # ============================================================
 
     collection = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+        ee.ImageCollection(
+            "COPERNICUS/S2_SR_HARMONIZED"
+        )
         .filterBounds(roi)
-        .filterDate("2023-11-01", "2024-03-31")
+        .filterDate(
+            "2023-11-01",
+            "2024-03-31"
+        )
         .filter(
             ee.Filter.lt(
                 "CLOUDY_PIXEL_PERCENTAGE",
@@ -37,8 +104,9 @@ def process_water_boundaries(
         )
     )
 
+
     # ============================================================
-    # 3. CLOUD / SHADOW MASK
+    # 5. CLOUD / SHADOW MASK
     # ============================================================
 
     def mask_s2(image):
@@ -55,40 +123,73 @@ def process_water_boundaries(
 
         return image.updateMask(mask)
 
+
+    # ============================================================
+    # 6. CREATE SENTINEL COMPOSITE
+    # ============================================================
+
     s2 = (
         collection
         .map(mask_s2)
         .median()
-        .clip(roi)
     )
 
+
     # ============================================================
-    # 4. WATER INDICES
+    # 7. DETECTION IMAGE
+    #
+    # Only the circular ROI is used for water detection.
+    # ============================================================
+
+    s2_detection = s2.clip(
+        roi
+    )
+
+
+    # ============================================================
+    # 8. WATER INDICES
     # ============================================================
 
     ndwi = (
-        s2.normalizedDifference(["B3", "B8"])
+        s2_detection
+        .normalizedDifference([
+            "B3",
+            "B8"
+        ])
         .rename("NDWI")
     )
 
     mndwi = (
-        s2.normalizedDifference(["B3", "B11"])
+        s2_detection
+        .normalizedDifference([
+            "B3",
+            "B11"
+        ])
         .rename("MNDWI")
     )
 
+
     # ============================================================
-    # 5. CREATE WATER MASK
+    # 9. WATER MASK
     # ============================================================
 
     water_mask = (
-        ndwi.gt(float(threshold))
-        .Or(mndwi.gt(0.0))
-        .And(ndwi.gt(-0.2))
-        .And(mndwi.gt(-0.2))
+        ndwi
+        .gt(float(threshold))
+        .Or(
+            mndwi.gt(0.0)
+        )
+        .And(
+            ndwi.gt(-0.2)
+        )
+        .And(
+            mndwi.gt(-0.2)
+        )
     )
 
+
     # ============================================================
-    # 6. CLEAN WATER MASK
+    # 10. CLEAN WATER MASK
     # ============================================================
 
     cleaned = (
@@ -105,94 +206,158 @@ def process_water_boundaries(
         )
     )
 
-    connected = cleaned.connectedPixelCount(
-        50,
-        False
-    )
-
-    cleaned = cleaned.updateMask(
-        connected.gte(15)
-    )
 
     # ============================================================
-    # 7. CONVERT WATER TO POLYGONS
+    # 11. REMOVE SMALL CONNECTED PATCHES
     # ============================================================
 
-    vectors = cleaned.selfMask().reduceToVectors(
-        geometry=roi,
-        scale=20,
-        geometryType="polygon",
-        labelProperty="water",
-        maxPixels=int(1e9),
-        bestEffort=True,
-        tileScale=4
+    connected = (
+        cleaned.connectedPixelCount(
+            50,
+            False
+        )
     )
 
+    cleaned = (
+        cleaned.updateMask(
+            connected.gte(15)
+        )
+    )
+
+
     # ============================================================
-    # 8. CALCULATE AREA
+    # 12. CONVERT WATER TO POLYGONS
+    # ============================================================
+
+    vectors = (
+        cleaned
+        .selfMask()
+        .reduceToVectors(
+            geometry=roi,
+            scale=20,
+            geometryType="polygon",
+            labelProperty="water",
+            maxPixels=int(1e9),
+            bestEffort=True,
+            tileScale=4
+        )
+    )
+
+
+    # ============================================================
+    # 13. CALCULATE AREA
     # ============================================================
 
     def add_area(feature):
 
-        area = feature.geometry().area(1)
+        area = feature.geometry().area(
+            1
+        )
 
         return feature.set({
-            "area_m2": area,
-            "area_km2": area.divide(1_000_000)
+
+            "area_m2":
+                area,
+
+            "area_km2":
+                area.divide(
+                    1_000_000
+                )
+
         })
 
-    vectors = vectors.map(add_area)
 
-    # Remove tiny detections
-    vectors = vectors.filter(
-        ee.Filter.gt(
-            "area_m2",
-            float(area_min)
+    vectors = vectors.map(
+        add_area
+    )
+
+
+    # ============================================================
+    # 14. REMOVE SMALL WATER BODIES
+    # ============================================================
+
+    vectors = (
+        vectors.filter(
+            ee.Filter.gt(
+                "area_m2",
+                float(area_min)
+            )
         )
     )
 
-    # ============================================================
-    # 9. SATELLITE VISUALIZATION
-    # ============================================================
-
-    s2_map = s2.visualize(
-        bands=["B4", "B3", "B2"],
-        min=0,
-        max=3000,
-        gamma=1.2
-    ).getMapId()
 
     # ============================================================
-    # 10. NDWI VISUALIZATION
+    # 15. SATELLITE VISUALIZATION
+    #
+    # IMPORTANT:
+    # Use display_roi, NOT roi.
+    #
+    # Therefore satellite imagery continues outside the
+    # water-detection circle.
     # ============================================================
 
-    ndwi_map = ndwi.visualize(
-        min=-0.3,
-        max=0.5,
-        palette=[
-            "#8B4513",
-            "#DAA520",
-            "#228B22",
-            "#00CED1",
-            "#0000FF"
-        ]
-    ).getMapId()
+    satellite_display = (
+        s2
+        .clip(display_roi)
+    )
+
+    s2_map = (
+        satellite_display
+        .visualize(
+            bands=[
+                "B4",
+                "B3",
+                "B2"
+            ],
+            min=0,
+            max=3000,
+            gamma=1.2
+        )
+        .getMapId()
+    )
+
 
     # ============================================================
-    # 11. WATER MASK VISUALIZATION
+    # 16. NDWI VISUALIZATION
+    #
+    # NDWI remains limited to detection region.
+    # ============================================================
+
+    ndwi_map = (
+        ndwi
+        .visualize(
+            min=-0.3,
+            max=0.5,
+            palette=[
+                "#8B4513",
+                "#DAA520",
+                "#228B22",
+                "#00CED1",
+                "#0000FF"
+            ]
+        )
+        .getMapId()
+    )
+
+
+    # ============================================================
+    # 17. WATER MASK VISUALIZATION
     # ============================================================
 
     mask_map = (
         cleaned
         .selfMask()
         .visualize(
-            palette=["#00BFFF"]
+            palette=[
+                "#00BFFF"
+            ]
         )
         .getMapId()
     )
 
+
     # ============================================================
-    # 12. TILE URL FUNCTION
+    # 18. TILE URL
     # ============================================================
 
     def tile_url(map_object):
@@ -203,15 +368,18 @@ def process_water_boundaries(
             + "/tiles/{z}/{x}/{y}"
         )
 
+
     # ============================================================
-    # 13. GET GEOJSON
+    # 19. GET GEOJSON
     # ============================================================
 
     raw = vectors.getInfo()
 
+
     if (
         isinstance(raw, dict)
-        and raw.get("type") == "FeatureCollection"
+        and raw.get("type")
+        == "FeatureCollection"
     ):
 
         features = raw.get(
@@ -224,7 +392,9 @@ def process_water_boundaries(
         and "features" in raw
     ):
 
-        features = raw["features"]
+        features = raw[
+            "features"
+        ]
 
     elif isinstance(raw, list):
 
@@ -234,58 +404,75 @@ def process_water_boundaries(
 
         features = []
 
+
     # ============================================================
-    # 14. CLEAN + NUMBER WATER BODIES
+    # 20. CLEAN + NUMBER WATER BODIES
     # ============================================================
 
     clean_features = []
 
-    # IMPORTANT:
-    # numbering is based only on VALID features,
-    # so we always get 1,2,3,4... without gaps.
 
     for feature in features:
 
-        if not isinstance(feature, dict):
+        if not isinstance(
+            feature,
+            dict
+        ):
             continue
+
 
         geometry = feature.get(
             "geometry"
         )
 
+
         if not geometry:
             continue
 
-        if not geometry.get("type"):
+
+        if not geometry.get(
+            "type"
+        ):
             continue
 
-        if not geometry.get("coordinates"):
+
+        if not geometry.get(
+            "coordinates"
+        ):
             continue
+
 
         properties = feature.get(
             "properties",
             {}
         ).copy()
 
-        # --------------------------------------------
-        # Sequential Water Body ID
-        # --------------------------------------------
+
+        # --------------------------------------------------------
+        # WATER BODY NUMBER
+        # --------------------------------------------------------
 
         water_body_id = (
             len(clean_features) + 1
         )
 
-        properties["water_body_id"] = (
-            water_body_id
+
+        properties[
+            "water_body_id"
+        ] = water_body_id
+
+
+        properties[
+            "water_body_name"
+        ] = (
+            f"Water Body "
+            f"{water_body_id}"
         )
 
-        properties["water_body_name"] = (
-            f"Water Body {water_body_id}"
-        )
 
-        # --------------------------------------------
-        # Ensure area values exist
-        # --------------------------------------------
+        # --------------------------------------------------------
+        # AREA
+        # --------------------------------------------------------
 
         try:
 
@@ -296,71 +483,58 @@ def process_water_boundaries(
                 )
             )
 
-        except (TypeError, ValueError):
+        except (
+            TypeError,
+            ValueError
+        ):
 
             area_m2 = 0
 
-        properties["area_m2"] = area_m2
 
-        properties["area_km2"] = (
-            area_m2 / 1_000_000
+        properties[
+            "area_m2"
+        ] = area_m2
+
+
+        properties[
+            "area_km2"
+        ] = (
+            area_m2
+            / 1_000_000
         )
+
 
         clean_features.append({
 
-            "type": "Feature",
+            "type":
+                "Feature",
 
-            "geometry": geometry,
+            "geometry":
+                geometry,
 
-            "properties": properties
+            "properties":
+                properties
 
         })
 
+
     # ============================================================
-    # 15. FINAL GEOJSON
+    # 21. FINAL GEOJSON
     # ============================================================
 
     final_geojson = {
 
-        "type": "FeatureCollection",
+        "type":
+            "FeatureCollection",
 
-        "features": clean_features
+        "features":
+            clean_features
 
     }
 
-    # ============================================================
-    # 16. GET ROI BOUNDS
-    # ============================================================
-
-    roi_bounds = (
-        roi
-        .bounds()
-        .coordinates()
-        .getInfo()[0]
-    )
-
-    # Convert Earth Engine polygon coordinates into
-    # west/south/east/north values
-
-    longitudes = [
-        coordinate[0]
-        for coordinate in roi_bounds
-    ]
-
-    latitudes = [
-        coordinate[1]
-        for coordinate in roi_bounds
-    ]
-
-    bbox = [
-        min(longitudes),  # west
-        min(latitudes),   # south
-        max(longitudes),  # east
-        max(latitudes)    # north
-    ]
 
     # ============================================================
-    # 17. RETURN RESULT
+    # 22. RETURN
     # ============================================================
 
     return {
@@ -369,34 +543,45 @@ def process_water_boundaries(
             final_geojson,
 
         "feature_count":
-            len(clean_features),
+            len(
+                clean_features
+            ),
 
         "center": {
 
             "latitude":
-                float(latitude),
+                latitude,
 
             "longitude":
-                float(longitude)
+                longitude
 
         },
 
         "radius_km":
-            float(radius_km),
+            radius_km,
 
+        # Detection/display bounds.
+        # Frontend can use these for map fitting.
         "bbox":
-            bbox,
+            display_bounds,
 
         "tile_urls": {
 
             "satellite":
-                tile_url(s2_map),
+                tile_url(
+                    s2_map
+                ),
 
-            "ndwi":
-                tile_url(ndwi_map),
+            "ndwi":s
+                tile_url(
+                    ndwi_map
+                ),
 
             "water_mask":
-                tile_url(mask_map)
+                tile_url(
+                    mask_map
+                )
 
         }
+
     }

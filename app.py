@@ -107,7 +107,7 @@ def detect_water():
 
         radius_km = body.get(
             "radius_km",
-            10
+            50
         )
 
         threshold = body.get(
@@ -119,6 +119,7 @@ def detect_water():
             "area_min",
             8000
         )
+
 
         # --------------------------------------------------------
         # VALIDATE COORDINATES
@@ -137,6 +138,11 @@ def detect_water():
                     "latitude and longitude are required"
 
             }), 400
+
+
+        # --------------------------------------------------------
+        # CONVERT NUMERIC VALUES
+        # --------------------------------------------------------
 
         try:
 
@@ -171,6 +177,7 @@ def detect_water():
 
             }), 400
 
+
         # --------------------------------------------------------
         # COORDINATE RANGE
         # --------------------------------------------------------
@@ -186,6 +193,7 @@ def detect_water():
 
             }), 400
 
+
         if not -180 <= longitude <= 180:
 
             return jsonify({
@@ -197,32 +205,42 @@ def detect_water():
 
             }), 400
 
+
         # --------------------------------------------------------
-        # RADIUS
+        # ALLOWED SCAN RADII
         # --------------------------------------------------------
 
-        if radius_km <= 0:
+        allowed_radii = [
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            90,
+            100
+        ]
+
+
+        # --------------------------------------------------------
+        # RADIUS VALIDATION
+        # --------------------------------------------------------
+
+        if radius_km not in allowed_radii:
 
             return jsonify({
 
                 "status": "error",
 
                 "message":
-                    "radius_km must be greater than 0"
+                    "radius_km must be one of: "
+                    "30, 40, 50, 60, 70, 80, 90, 100 km",
+
+                "allowed_radii":
+                    allowed_radii
 
             }), 400
 
-        # Keep the application manageable
-        if radius_km > 50:
-
-            return jsonify({
-
-                "status": "error",
-
-                "message":
-                    "Maximum scan radius is 50 km"
-
-            }), 400
 
         # --------------------------------------------------------
         # WATER DETECTION
@@ -241,6 +259,7 @@ def detect_water():
             area_min=area_min
 
         )
+
 
         # --------------------------------------------------------
         # RESPONSE
@@ -270,6 +289,7 @@ def detect_water():
                 result["tile_urls"]
 
         })
+
 
     except Exception as e:
 
@@ -305,6 +325,7 @@ def analyze_place():
             "place"
         )
 
+
         if not place_name:
 
             return jsonify({
@@ -316,9 +337,11 @@ def analyze_place():
 
             }), 400
 
+
         location = get_location(
             place_name
         )
+
 
         if not location:
 
@@ -331,6 +354,7 @@ def analyze_place():
 
             }), 404
 
+
         image = get_sentinel_image(
 
             location["lat"],
@@ -338,6 +362,7 @@ def analyze_place():
             location["lon"]
 
         )
+
 
         return jsonify({
 
@@ -360,6 +385,7 @@ def analyze_place():
                 image is not None
 
         })
+
 
     except Exception as e:
 
