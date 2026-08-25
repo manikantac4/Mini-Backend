@@ -37,7 +37,7 @@ if service_account_json:
 
     ee.Initialize(
         credentials=credentials,
-        project="water-segmentation-gee"
+        project="nifty-state-506612-j1"
     )
 
 else:
@@ -49,7 +49,7 @@ else:
     # ------------------------------------------------------------
 
     ee.Initialize(
-        project="water-segmentation-gee"
+        project="nifty-state-506612-j1"
     )
 
 
