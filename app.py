@@ -18,27 +18,54 @@ service_account_json = os.environ.get(
     "GOOGLE_APPLICATION_CREDENTIALS_JSON"
 )
 
+# Get Google Earth Engine project from environment.
+# Render:
+# GEE_PROJECT_ID = nifty-state-506612-j1
+GEE_PROJECT_ID = os.environ.get("GEE_PROJECT_ID")
+
+if not GEE_PROJECT_ID:
+    raise RuntimeError(
+        "GEE_PROJECT_ID is missing from environment variables"
+    )
+
+
 if service_account_json:
 
     # ------------------------------------------------------------
     # RENDER / PRODUCTION
     # ------------------------------------------------------------
 
-    service_account_info = json.loads(
-        service_account_json
-    )
+    try:
 
-    credentials = ee.ServiceAccountCredentials(
-        service_account_info["client_email"],
-        key_data=json.dumps(
-            service_account_info
+        service_account_info = json.loads(
+            service_account_json
         )
-    )
 
-    ee.Initialize(
-        credentials=credentials,
-        project="nifty-state-506612-j1"
-    )
+        credentials = ee.ServiceAccountCredentials(
+            service_account_info["client_email"],
+            key_data=json.dumps(
+                service_account_info
+            )
+        )
+
+        ee.Initialize(
+            credentials=credentials,
+            project=GEE_PROJECT_ID
+        )
+
+        print(
+            f"✓ Google Earth Engine initialized "
+            f"with project: {GEE_PROJECT_ID}"
+        )
+
+    except Exception as e:
+
+        print(
+            "EARTH ENGINE INITIALIZATION ERROR:",
+            str(e)
+        )
+
+        raise
 
 else:
 
@@ -49,7 +76,12 @@ else:
     # ------------------------------------------------------------
 
     ee.Initialize(
-        project="nifty-state-506612-j1"
+        project=GEE_PROJECT_ID
+    )
+
+    print(
+        f"✓ Google Earth Engine initialized "
+        f"with project: {GEE_PROJECT_ID}"
     )
 
 
@@ -59,14 +91,54 @@ else:
 
 app = Flask(__name__)
 
-CORS(app)
+
+# ================================================================
+# CORS
+# ================================================================
+
+# Production frontend
+FRONTEND_ORIGIN = os.environ.get(
+    "FRONTEND_ORIGIN",
+    "https://mini-frontend-ivory.vercel.app"
+)
+
+# Allowed frontend origins
+ALLOWED_ORIGINS = [
+    FRONTEND_ORIGIN,
+
+    # Local development
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+
+CORS(
+    app,
+    resources={
+        r"/*": {
+            "origins": ALLOWED_ORIGINS,
+            "methods": [
+                "GET",
+                "POST",
+                "OPTIONS"
+            ],
+            "allow_headers": [
+                "Content-Type",
+                "Authorization"
+            ]
+        }
+    }
+)
 
 
 # ================================================================
 # HOME
 # ================================================================
 
-@app.route("/", methods=["GET"])
+@app.route(
+    "/",
+    methods=["GET"]
+)
 def home():
 
     return jsonify({
@@ -74,7 +146,10 @@ def home():
         "status": "ok",
 
         "message":
-            "Water Detection API running"
+            "Water Detection API running",
+
+        "gee_project":
+            GEE_PROJECT_ID
 
     })
 
@@ -85,9 +160,16 @@ def home():
 
 @app.route(
     "/detect-water",
-    methods=["POST"]
+    methods=["POST", "OPTIONS"]
 )
 def detect_water():
+
+    # ------------------------------------------------------------
+    # HANDLE CORS PREFLIGHT
+    # ------------------------------------------------------------
+
+    if request.method == "OPTIONS":
+        return "", 204
 
     try:
 
@@ -120,9 +202,9 @@ def detect_water():
             8000
         )
 
-        # Advanced / optional tuning parameters. These are all
-        # optional — if the frontend doesn't send them, the
-        # defaults defined in gee_processor.py are used.
+        # Advanced / optional tuning parameters.
+        # These are optional — if the frontend doesn't send them,
+        # the defaults defined in gee_processor.py are used.
 
         ndwi_secondary_threshold = body.get(
             "ndwi_secondary_threshold"
@@ -148,7 +230,6 @@ def detect_water():
             "min_connected_pixels"
         )
 
-
         # --------------------------------------------------------
         # VALIDATE COORDINATES
         # --------------------------------------------------------
@@ -166,7 +247,6 @@ def detect_water():
                     "latitude and longitude are required"
 
             }), 400
-
 
         # --------------------------------------------------------
         # CONVERT NUMERIC VALUES
@@ -194,25 +274,44 @@ def detect_water():
                 area_min
             )
 
-            # Optional advanced parameters — only cast if provided.
+            # Optional advanced parameters.
+            # Only cast if provided.
 
             if ndwi_secondary_threshold is not None:
-                ndwi_secondary_threshold = float(ndwi_secondary_threshold)
+
+                ndwi_secondary_threshold = float(
+                    ndwi_secondary_threshold
+                )
 
             if mndwi_threshold is not None:
-                mndwi_threshold = float(mndwi_threshold)
+
+                mndwi_threshold = float(
+                    mndwi_threshold
+                )
 
             if awei_threshold is not None:
-                awei_threshold = float(awei_threshold)
+
+                awei_threshold = float(
+                    awei_threshold
+                )
 
             if max_ndvi is not None:
-                max_ndvi = float(max_ndvi)
+
+                max_ndvi = float(
+                    max_ndvi
+                )
 
             if max_ndbi is not None:
-                max_ndbi = float(max_ndbi)
+
+                max_ndbi = float(
+                    max_ndbi
+                )
 
             if min_connected_pixels is not None:
-                min_connected_pixels = int(min_connected_pixels)
+
+                min_connected_pixels = int(
+                    min_connected_pixels
+                )
 
         except (TypeError, ValueError):
 
@@ -224,7 +323,6 @@ def detect_water():
                     "Invalid numeric input"
 
             }), 400
-
 
         # --------------------------------------------------------
         # COORDINATE RANGE
@@ -241,7 +339,6 @@ def detect_water():
 
             }), 400
 
-
         if not -180 <= longitude <= 180:
 
             return jsonify({
@@ -252,7 +349,6 @@ def detect_water():
                     "Invalid longitude"
 
             }), 400
-
 
         # --------------------------------------------------------
         # ALLOWED SCAN RADII
@@ -268,7 +364,6 @@ def detect_water():
             90,
             100
         ]
-
 
         # --------------------------------------------------------
         # RADIUS VALIDATION
@@ -289,53 +384,68 @@ def detect_water():
 
             }), 400
 
-
         # --------------------------------------------------------
         # WATER DETECTION
         #
-        # Only pass advanced parameters that were actually supplied
-        # so gee_processor.py's own defaults apply otherwise.
+        # Only pass advanced parameters that were actually
+        # supplied so gee_processor.py's own defaults apply
+        # otherwise.
         # --------------------------------------------------------
 
         detection_kwargs = {
 
-            "latitude": latitude,
+            "latitude":
+                latitude,
 
-            "longitude": longitude,
+            "longitude":
+                longitude,
 
-            "radius_km": radius_km,
+            "radius_km":
+                radius_km,
 
-            "threshold": threshold,
+            "threshold":
+                threshold,
 
-            "area_min": area_min,
+            "area_min":
+                area_min,
 
         }
 
         optional_params = {
 
-            "ndwi_secondary_threshold": ndwi_secondary_threshold,
+            "ndwi_secondary_threshold":
+                ndwi_secondary_threshold,
 
-            "mndwi_threshold": mndwi_threshold,
+            "mndwi_threshold":
+                mndwi_threshold,
 
-            "awei_threshold": awei_threshold,
+            "awei_threshold":
+                awei_threshold,
 
-            "max_ndvi": max_ndvi,
+            "max_ndvi":
+                max_ndvi,
 
-            "max_ndbi": max_ndbi,
+            "max_ndbi":
+                max_ndbi,
 
-            "min_connected_pixels": min_connected_pixels,
+            "min_connected_pixels":
+                min_connected_pixels,
 
         }
 
         for key, value in optional_params.items():
 
             if value is not None:
+
                 detection_kwargs[key] = value
+
+        # --------------------------------------------------------
+        # RUN WATER DETECTION
+        # --------------------------------------------------------
 
         result = process_water_boundaries(
             **detection_kwargs
         )
-
 
         # --------------------------------------------------------
         # RESPONSE
@@ -365,10 +475,12 @@ def detect_water():
                 result["tile_urls"],
 
             "parameters":
-                result.get("parameters", {})
+                result.get(
+                    "parameters",
+                    {}
+                )
 
         })
-
 
     except Exception as e:
 
@@ -379,9 +491,11 @@ def detect_water():
 
         return jsonify({
 
-            "status": "error",
+            "status":
+                "error",
 
-            "message": str(e)
+            "message":
+                str(e)
 
         }), 500
 
@@ -392,9 +506,16 @@ def detect_water():
 
 @app.route(
     "/ai/analyze-place",
-    methods=["POST"]
+    methods=["POST", "OPTIONS"]
 )
 def analyze_place():
+
+    # ------------------------------------------------------------
+    # HANDLE CORS PREFLIGHT
+    # ------------------------------------------------------------
+
+    if request.method == "OPTIONS":
+        return "", 204
 
     try:
 
@@ -403,7 +524,6 @@ def analyze_place():
         place_name = body.get(
             "place"
         )
-
 
         if not place_name:
 
@@ -416,11 +536,9 @@ def analyze_place():
 
             }), 400
 
-
         location = get_location(
             place_name
         )
-
 
         if not location:
 
@@ -433,7 +551,6 @@ def analyze_place():
 
             }), 404
 
-
         image = get_sentinel_image(
 
             location["lat"],
@@ -441,7 +558,6 @@ def analyze_place():
             location["lon"]
 
         )
-
 
         return jsonify({
 
@@ -465,14 +581,20 @@ def analyze_place():
 
         })
 
-
     except Exception as e:
+
+        print(
+            "ANALYZE PLACE ERROR:",
+            str(e)
+        )
 
         return jsonify({
 
-            "status": "error",
+            "status":
+                "error",
 
-            "message": str(e)
+            "message":
+                str(e)
 
         }), 500
 
