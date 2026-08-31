@@ -9,7 +9,22 @@ from gee_processor import process_water_boundaries
 from services.geocoder import get_location
 from services.gee_service import get_sentinel_image
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://mini-frontend-ivory.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # ================================================================
 # EARTH ENGINE INITIALIZATION
 # ================================================================
