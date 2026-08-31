@@ -9,22 +9,7 @@ from gee_processor import process_water_boundaries
 from services.geocoder import get_location
 from services.gee_service import get_sentinel_image
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://mini-frontend-ivory.vercel.app",
-        "http://localhost:3000",
-        "http://localhost:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 # ================================================================
 # EARTH ENGINE INITIALIZATION
 # ================================================================
@@ -186,9 +171,11 @@ def detect_water():
     if request.method == "OPTIONS":
         return "", 204
 
+
     try:
 
         body = request.get_json() or {}
+
 
         # --------------------------------------------------------
         # INPUT
@@ -216,6 +203,7 @@ def detect_water():
             "area_min",
             8000
         )
+
 
         # Advanced / optional tuning parameters.
         # These are optional — if the frontend doesn't send them,
@@ -245,6 +233,7 @@ def detect_water():
             "min_connected_pixels"
         )
 
+
         # --------------------------------------------------------
         # VALIDATE COORDINATES
         # --------------------------------------------------------
@@ -262,6 +251,7 @@ def detect_water():
                     "latitude and longitude are required"
 
             }), 400
+
 
         # --------------------------------------------------------
         # CONVERT NUMERIC VALUES
@@ -289,6 +279,7 @@ def detect_water():
                 area_min
             )
 
+
             # Optional advanced parameters.
             # Only cast if provided.
 
@@ -298,11 +289,13 @@ def detect_water():
                     ndwi_secondary_threshold
                 )
 
+
             if mndwi_threshold is not None:
 
                 mndwi_threshold = float(
                     mndwi_threshold
                 )
+
 
             if awei_threshold is not None:
 
@@ -310,11 +303,13 @@ def detect_water():
                     awei_threshold
                 )
 
+
             if max_ndvi is not None:
 
                 max_ndvi = float(
                     max_ndvi
                 )
+
 
             if max_ndbi is not None:
 
@@ -322,11 +317,13 @@ def detect_water():
                     max_ndbi
                 )
 
+
             if min_connected_pixels is not None:
 
                 min_connected_pixels = int(
                     min_connected_pixels
                 )
+
 
         except (TypeError, ValueError):
 
@@ -338,6 +335,7 @@ def detect_water():
                     "Invalid numeric input"
 
             }), 400
+
 
         # --------------------------------------------------------
         # COORDINATE RANGE
@@ -354,6 +352,7 @@ def detect_water():
 
             }), 400
 
+
         if not -180 <= longitude <= 180:
 
             return jsonify({
@@ -364,6 +363,7 @@ def detect_water():
                     "Invalid longitude"
 
             }), 400
+
 
         # --------------------------------------------------------
         # ALLOWED SCAN RADII
@@ -379,6 +379,7 @@ def detect_water():
             90,
             100
         ]
+
 
         # --------------------------------------------------------
         # RADIUS VALIDATION
@@ -398,6 +399,7 @@ def detect_water():
                     allowed_radii
 
             }), 400
+
 
         # --------------------------------------------------------
         # WATER DETECTION
@@ -426,6 +428,7 @@ def detect_water():
 
         }
 
+
         optional_params = {
 
             "ndwi_secondary_threshold":
@@ -448,11 +451,13 @@ def detect_water():
 
         }
 
+
         for key, value in optional_params.items():
 
             if value is not None:
 
                 detection_kwargs[key] = value
+
 
         # --------------------------------------------------------
         # RUN WATER DETECTION
@@ -461,6 +466,7 @@ def detect_water():
         result = process_water_boundaries(
             **detection_kwargs
         )
+
 
         # --------------------------------------------------------
         # RESPONSE
@@ -497,6 +503,7 @@ def detect_water():
 
         })
 
+
     except Exception as e:
 
         print(
@@ -532,6 +539,7 @@ def analyze_place():
     if request.method == "OPTIONS":
         return "", 204
 
+
     try:
 
         body = request.get_json() or {}
@@ -539,6 +547,7 @@ def analyze_place():
         place_name = body.get(
             "place"
         )
+
 
         if not place_name:
 
@@ -551,9 +560,11 @@ def analyze_place():
 
             }), 400
 
+
         location = get_location(
             place_name
         )
+
 
         if not location:
 
@@ -566,13 +577,12 @@ def analyze_place():
 
             }), 404
 
+
         image = get_sentinel_image(
-
             location["lat"],
-
             location["lon"]
-
         )
+
 
         return jsonify({
 
@@ -595,6 +605,7 @@ def analyze_place():
                 image is not None
 
         })
+
 
     except Exception as e:
 
